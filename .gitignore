@@ -1,3 +1,7 @@
+.env
+.DS_Store
+sample_data/
+
 # Python-generated files
 __pycache__/
 *.py[oc]
