@@ -49,23 +49,42 @@ class InvoiceProcessor:
 
         return True
 
-    def get_pdf_files(self) -> List[pathlib.Path]:
+    def get_supported_files(self) -> List[pathlib.Path]:
         """
-        Get all PDF files from the specified folder.
+        Get all supported files (PDF and JPEG) from the specified folder.
 
         Returns:
-            List of pathlib.Path objects for PDF files
+            List of pathlib.Path objects for supported files
         """
         try:
-            pdf_files = [
+            supported_extensions = {'.pdf', '.jpg', '.jpeg'}
+            supported_files = [
                 file for file in self.data_folder.iterdir()
-                if file.is_file() and file.suffix.lower() == '.pdf'
+                if file.is_file() and file.suffix.lower() in supported_extensions
             ]
-            logger.info(f"Found {len(pdf_files)} PDF files in {self.data_folder}")
-            return pdf_files
+            logger.info(f"Found {len(supported_files)} supported files in {self.data_folder}")
+            return supported_files
         except PermissionError:
             logger.error(f"Permission denied accessing folder: {self.data_folder}")
             return []
+
+    def get_mime_type(self, filepath: pathlib.Path) -> str:
+        """
+        Get the appropriate MIME type for a file based on its extension.
+
+        Args:
+            filepath: Path to the file
+
+        Returns:
+            MIME type string
+        """
+        extension = filepath.suffix.lower()
+        if extension == '.pdf':
+            return 'application/pdf'
+        elif extension in ['.jpg', '.jpeg']:
+            return 'image/jpeg'
+        else:
+            raise ValueError(f"Unsupported file extension: {extension}")
 
     def sanitize_filename(self, text: str) -> str:
         """
@@ -108,7 +127,7 @@ class InvoiceProcessor:
         Extract invoice data using Google's Gemini API.
 
         Args:
-            filepath: Path to the PDF file
+            filepath: Path to the file
 
         Returns:
             Invoice object if successful, None otherwise
@@ -122,12 +141,15 @@ class InvoiceProcessor:
         )
 
         try:
+            # Get the appropriate MIME type for the file
+            mime_type = self.get_mime_type(filepath)
+
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash-lite",
                 contents=[
                     types.Part.from_bytes(
                         data=filepath.read_bytes(),
-                        mime_type='application/pdf',
+                        mime_type=mime_type,
                     ),
                     prompt
                 ],
@@ -145,6 +167,9 @@ class InvoiceProcessor:
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response for {filepath.name}: {e}")
+            return None
+        except ValueError as e:
+            logger.error(f"Unsupported file type for {filepath.name}: {e}")
             return None
         except Exception as e:
             logger.error(f"Error extracting data from {filepath.name}: {e}")
@@ -219,7 +244,7 @@ class InvoiceProcessor:
 
     def process_all_files(self) -> Tuple[int, int]:
         """
-        Process all PDF files in the specified folder.
+        Process all supported files (PDF and JPEG) in the specified folder.
 
         Returns:
             Tuple of (successful_count, total_count)
@@ -227,25 +252,25 @@ class InvoiceProcessor:
         if not self.validate_folder():
             return 0, 0
 
-        pdf_files = self.get_pdf_files()
-        if not pdf_files:
-            logger.warning("No PDF files found to process")
+        supported_files = self.get_supported_files()
+        if not supported_files:
+            logger.warning("No supported files found to process")
             return 0, 0
 
         successful_count = 0
 
-        for pdf_file in pdf_files:
+        for file in supported_files:
             try:
-                if self.process_file(pdf_file):
+                if self.process_file(file):
                     successful_count += 1
             except KeyboardInterrupt:
                 logger.info("Processing interrupted by user")
                 break
             except Exception as e:
-                logger.error(f"Unexpected error processing {pdf_file.name}: {e}")
+                logger.error(f"Unexpected error processing {file.name}: {e}")
                 continue
 
-        return successful_count, len(pdf_files)
+        return successful_count, len(supported_files)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -276,20 +301,24 @@ def parse_arguments() -> argparse.Namespace:
         Parsed arguments namespace
     """
     parser = argparse.ArgumentParser(
-        description="Process invoice PDFs and rename them based on extracted data",
+        description="Process invoice files (PDF and JPEG) and rename them based on extracted data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s /path/to/invoices
   %(prog)s ./sample_data --verbose
   %(prog)s ~/Documents/invoices --verbose
+
+Supported file formats:
+  - PDF files (.pdf)
+  - JPEG images (.jpg, .jpeg)
         """
     )
 
     parser.add_argument(
         "folder",
         type=str,
-        help="Path to the folder containing invoice PDF files"
+        help="Path to the folder containing invoice files (PDF and JPEG supported)"
     )
 
     parser.add_argument(
